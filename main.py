@@ -15,7 +15,17 @@ LIGHT_COLOR = (239,216,182)
 OFFSET = (100, 100)
 SQUARE_SIZE = 100
 
+def is_valid_position(pos):
+        col, row = pos
+        return col >= 0 and col <= 7 and row >= 0 and row <= 7
 
+def get_square_under_cursor():
+        cursor_vector = pygame.Vector2(pygame.mouse.get_pos()) - OFFSET
+        square_col = int(cursor_vector[0] // SQUARE_SIZE)
+        square_row = int(cursor_vector[1] // SQUARE_SIZE)
+        pos = (square_col, square_row)
+        if is_valid_position(pos): return pos
+        return -1, -1
 
 class Piece(pygame.sprite.Sprite):
     def __init__(self, type, side, pos):
@@ -52,13 +62,17 @@ class Board(pygame.surface.Surface):
                 self.board[col].append(None)
         self.selected = None
         self.turn = WHITE
-        self.lastmove = None
+        self.last_move = None
+        self.last_selected = None
+        self.last_selected_moves = []
+        self.transparent_surface = pygame.Surface((SQUARE_SIZE*8, SQUARE_SIZE*8), pygame.SRCALPHA)
 
     
     def clear_board(self):
         for col in self.board:
             for piece in col:
                 piece = None
+    
     
     def starting_position(self):
         self.clear_board()
@@ -97,21 +111,28 @@ class Board(pygame.surface.Surface):
                     SQUARE_SIZE))
                 if self.board[col][row] and self.board[col][row] != self.selected:
                     self.board[col][row].draw(self)
+                if (col, row) in self.last_selected_moves:
+                    circle_color = (0, 0, 0, 100)
+                    pygame.draw.circle(
+                        self.transparent_surface, 
+                        circle_color, 
+                        (col*SQUARE_SIZE + SQUARE_SIZE // 2, row*SQUARE_SIZE + SQUARE_SIZE // 2,),
+                        SQUARE_SIZE // 5
+                        )
         if self.selected:
             cursor_vector = pygame.Vector2(pygame.mouse.get_pos()) - OFFSET - (SQUARE_SIZE // 2, SQUARE_SIZE // 2)
             self.selected.draw(self, cursor_vector)
+        self.blit(self.transparent_surface, (0, 0))
 
 
     def draw(self, surface):
         surface.blit(self, OFFSET)
-    
-    
 
     def get_piece(self, pos, board = None):
         if board == None:
             board = self.board
         col, row = pos
-        if col >= 0 and row >= 0 and board[col][row]:
+        if is_valid_position(pos) and board[col][row]:
             return board[col][row]
         else:
             return None
@@ -129,7 +150,7 @@ class Board(pygame.surface.Surface):
                 self.turn = BLACK
             else: 
                 self.turn = WHITE
-            self.lastmove = (piece, lastpos, pos)
+            self.last_move = (piece, lastpos, pos)
     
     def board_if_move(self, piece, pos):
         if piece:
@@ -140,21 +161,42 @@ class Board(pygame.surface.Surface):
 
     def select_piece(self, piece):
         if piece:
-            self.selected = piece  
+            self.selected = piece
+            self.transparent_surface.fill((0,0,0,0))
+            self.last_selected = piece
+            self.last_selected_moves = self.get_valid_moves(piece)
 
-    def drop_selected(self, pos):
-        col, row = pos
-        piece = self.selected
+    def attempt_move(self, piece, pos):
         if piece:
-            if col >= 0 and piece.side == self.turn:
+            if is_valid_position(pos) and piece.side == self.turn:
                 validity = self.is_valid_move(piece, pos)
                 if validity:
                     self.move_piece(piece, pos)
+                    self.last_selected = None
+                    self.transparent_surface.fill((0,0,0,0))
+                    self.last_selected_moves = []
                     if type(validity) is tuple:
                         piece_to_capture = self.get_piece(validity)
                         self.remove_piece(piece_to_capture)
+                    return True
+        return False
+
+    def click(self, pos):
+        if not is_valid_position(pos):
+            return None
+        piece = self.get_piece(pos)
+        if piece and piece.side == self.turn:
+            self.select_piece(piece)
+        elif pos in self.last_selected_moves:
+            self.attempt_move(self.last_selected, pos)
+
+    def unclick(self, pos):
+        col, row = pos
+        if self.selected:
+            self.attempt_move(self.selected, pos)
             self.selected = None
-    
+
+
     def is_in_check(self, side, board = None):
         if board == None:
             board = self.board
@@ -172,6 +214,44 @@ class Board(pygame.surface.Surface):
                     if self.is_possible_move(piece, (king.col, king.row), board):
                         return True
         return False
+    
+    def get_valid_diagonals(self, piece, board, m=8):
+        directions = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
+        oldpos = (piece.col, piece.row)
+        possible_moves = []
+        for direction in directions:
+            limit = m
+            pos = tuple(map(lambda x, y: x + y, oldpos, direction))
+            while limit > 0 and is_valid_position(pos):
+                piece_to_capture = self.get_piece(pos, board)
+                if not piece_to_capture:
+                    possible_moves.append(pos)
+                else:
+                    if piece_to_capture.side != piece.side:
+                        possible_moves.append(pos)
+                    break
+                pos = tuple(map(lambda x, y: x + y, pos, direction))
+                limit -= 1
+        return possible_moves
+    
+    def get_valid_straights(self, piece, board, m=8):
+        directions = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        oldpos = (piece.col, piece.row)
+        possible_moves = []
+        for direction in directions:
+            limit = m
+            pos = tuple(map(lambda x, y: x + y, oldpos, direction))
+            while limit > 0 and is_valid_position(pos):
+                piece_to_capture = self.get_piece(pos, board)
+                if not piece_to_capture:
+                    possible_moves.append(pos)
+                else:
+                    if piece_to_capture.side != piece.side:
+                        possible_moves.append(pos)
+                    break
+                pos = tuple(map(lambda x, y: x + y, pos, direction))
+                limit -= 1
+        return possible_moves
 
     def is_valid_diagonal(self, oldpos, pos, board):
         
@@ -205,6 +285,71 @@ class Board(pygame.surface.Surface):
             return True
         return False
     
+    def get_possible_moves(self, piece, board = None):
+        if board == None:
+            board = self.board
+        oldcol, oldrow = piece.col, piece.row
+        possible_moves = []
+        if piece:
+            match piece.type:
+                case "P":
+                    pos_to_check = [(oldcol - 1, oldrow + (1 if piece.side == BLACK else -1)), (oldcol + 1, oldrow + (1 if piece.side == BLACK else -1))]
+                    for pos in pos_to_check:
+                        piece_to_capture = self.get_piece(pos, board)
+                        if piece_to_capture and piece_to_capture.side != piece.side:
+                            possible_moves.append(pos)
+                        if self.last_move:
+                            lastpiece, lastold, lastnew = self.last_move
+                            if lastpiece.type == PAWN and lastpiece.side != piece.side and lastold[0] == pos[0] and abs(lastnew[1] - lastold[1]) == 2 and lastnew[1] == oldrow:
+                                possible_moves.append(pos)
+                    forward_pos = (oldcol, oldrow + (1 if piece.side == BLACK else -1))
+                    if not self.get_piece(forward_pos, board):
+                        possible_moves.append(forward_pos)
+                        next_forward_pos = (oldcol, oldrow + (2 if piece.side == BLACK else -2))
+                        if not self.get_piece(next_forward_pos, board) and oldrow == (1 if piece.side == BLACK else 6):
+                            possible_moves.append(next_forward_pos)
+                case "N":
+                    pos_to_check = [(oldcol + 1, oldrow + 2), 
+                                    (oldcol + 1, oldrow - 2), 
+                                    (oldcol + 2, oldrow + 1), 
+                                    (oldcol + 2, oldrow - 1), 
+                                    (oldcol - 1, oldrow + 2), 
+                                    (oldcol - 1, oldrow - 2), 
+                                    (oldcol - 2, oldrow + 1), 
+                                    (oldcol - 2, oldrow - 1)]
+                    for pos in pos_to_check:
+                        piece_to_capture = self.get_piece(pos, board)
+                        if not piece_to_capture or piece_to_capture.side != piece.side:
+                            possible_moves.append(pos)
+                case "B":
+                    possible_moves.extend(self.get_valid_diagonals(piece, board))
+                case "R":
+                    possible_moves.extend(self.get_valid_straights(piece, board))
+                case "Q":
+                    possible_moves.extend(self.get_valid_diagonals(piece, board))
+                    possible_moves.extend(self.get_valid_straights(piece, board))
+                case "K":
+                    possible_moves.extend(self.get_valid_diagonals(piece, board, 1))
+                    possible_moves.extend(self.get_valid_straights(piece, board, 1))
+                case _:
+                    return False
+        return possible_moves
+    
+    def get_valid_moves(self, piece, board = None):
+        if board == None:
+            board = self.board
+        possible_moves = self.get_possible_moves(piece, board)
+        valid_moves = []
+        for move in possible_moves:
+            if not is_valid_position(move): continue
+            oldpos = (piece.col, piece.row)
+            newboard = self.board_if_move(piece, move)
+            piece.move(move)
+            if not self.is_in_check(piece.side, newboard):
+                valid_moves.append(move)
+            piece.move(oldpos)
+        return valid_moves
+    
     def is_possible_move(self, piece, pos, board = None):
         if board == None:
             board = self.board
@@ -215,15 +360,15 @@ class Board(pygame.surface.Surface):
         piece_to_capture = self.get_piece(pos, board)
         if piece_to_capture and piece_to_capture.side == piece.side:
             return False
-        if piece and col >= 0 and row >= 0:
+        if piece and is_valid_position(pos):
             match piece.type:
                 case "P":
                     if oldcol == col + 1 or oldcol == col - 1:
                         if (piece.side == WHITE and oldrow == row + 1) or (piece.side == BLACK and oldrow == row - 1):
                             if piece_to_capture:
                                 return True
-                            if self.lastmove:
-                                lastpiece, lastold, lastnew = self.lastmove
+                            if self.last_move:
+                                lastpiece, lastold, lastnew = self.last_move
                                 if lastpiece.type == PAWN and lastpiece.side != piece.side and lastold[0] == col and abs(lastnew[1] - lastold[1]) == 2 and lastnew[1] == oldrow:
                                     return (lastpiece.col, lastpiece.row)
                         return False
@@ -271,14 +416,7 @@ class Board(pygame.surface.Surface):
             piece.move(oldpos)
         return possible
 
-        
-            
-def get_square_under_cursor():
-        cursor_vector = pygame.Vector2(pygame.mouse.get_pos()) - OFFSET
-        square_row = int(cursor_vector[1] // SQUARE_SIZE)
-        square_col = int(cursor_vector[0] // SQUARE_SIZE)
-        if square_col >= 0 and square_row >= 0 and square_col <= 7 and square_row <= 7: return (square_col, square_row)
-        return -1, -1
+
 
 def main():
     pygame.init()
@@ -301,12 +439,10 @@ def main():
                 sys.exit()
             if event.type == MOUSEBUTTONDOWN:
                 square = get_square_under_cursor()
-                piece = board_surface.get_piece(square)
-                if piece:
-                    board_surface.select_piece(piece)
+                board_surface.click(square)
             if event.type == MOUSEBUTTONUP:
                 square = get_square_under_cursor()
-                board_surface.drop_selected(square)
+                board_surface.unclick(square)
                 
         board_surface.update()
         board_surface.draw(surface)
