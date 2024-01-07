@@ -2,8 +2,8 @@ import pygame
 from pygame.locals import *
 import sys
 
-WHITE = 0
-BLACK = 1
+WHITE = True
+BLACK = False
 BISHOP = "B"
 KNIGHT = "N"
 KING = "K"
@@ -56,10 +56,13 @@ class Board(pygame.surface.Surface):
     def __init__(self):
         super().__init__((SQUARE_SIZE*8, SQUARE_SIZE*8))
         self.board = []
+        self.valid_moves = []
         for col in range(8):
             self.board.append([])
+            self.valid_moves.append([])
             for row in range(8):
                 self.board[col].append(None)
+                self.valid_moves.append([])
         self.selected = None
         self.turn = WHITE
         self.last_move = None
@@ -146,10 +149,6 @@ class Board(pygame.surface.Surface):
             self.remove_piece(piece)
             self.board[pos[0]][pos[1]] = piece
             piece.move(pos)
-            if self.turn == WHITE:
-                self.turn = BLACK
-            else: 
-                self.turn = WHITE
             self.last_move = (piece, lastpos, pos)
     
     def board_if_move(self, piece, pos):
@@ -172,12 +171,16 @@ class Board(pygame.surface.Surface):
                 validity = self.is_valid_move(piece, pos)
                 if validity:
                     self.move_piece(piece, pos)
+                    self.turn = not self.turn
                     self.last_selected = None
-                    self.transparent_surface.fill((0,0,0,0))
                     self.last_selected_moves = []
+                    self.transparent_surface.fill((0,0,0,0))
                     if type(validity) is tuple:
                         piece_to_capture = self.get_piece(validity)
                         self.remove_piece(piece_to_capture)
+                    if self.is_in_checkmate(not piece.side):
+                        winner = "White" if piece.side == WHITE else "Black"
+                        print(winner + " wins!")
                     return True
         return False
 
@@ -210,10 +213,22 @@ class Board(pygame.surface.Surface):
         for col in range(8):
             for row in range(8):
                 piece = board[col][row]
-                if piece and piece.side == (BLACK if side == WHITE else WHITE):
+                if piece and piece.side != side:
                     if self.is_possible_move(piece, (king.col, king.row), board):
                         return True
         return False
+    
+    def is_in_checkmate(self, side):
+        if not self.is_in_check(side):
+            return False
+        for col in range(8):
+            for row in range(8):
+                piece = self.board[col][row]
+                if piece and piece.side == side:
+                    if self.get_valid_moves(piece):
+                        return False
+        return True
+        
     
     def get_valid_diagonals(self, piece, board, m=8):
         directions = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -452,5 +467,5 @@ if __name__ == '__main__':
     main()
 
 """
-TODO: Castling, Detect Checkmate
+TODO: Castling, Animate Click-Click Moves, Add cache for valid movess
 """
