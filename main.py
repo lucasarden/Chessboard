@@ -10,6 +10,10 @@ KING = "K"
 QUEEN = "Q"
 ROOK = "R"
 PAWN = "P"
+LONG_CASTLE = 0
+SHORT_CASTLE = 1
+EN_PASSANT = 2
+PROMOTION = 3
 DARK_COLOR = (182,136,100)
 LIGHT_COLOR = (239,216,182)
 OFFSET = (100, 100)
@@ -39,12 +43,17 @@ class Piece(pygame.sprite.Sprite):
         self.col = col
         self.row = row
         self.type = type
+        self.has_moved = False
     
     def move(self, pos):
+        self.has_moved = True
+        self.change_pos(pos)
+        self.rect.update(pos[0]*SQUARE_SIZE, pos[1]*SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
+    
+    def change_pos(self, pos):
         col, row = pos
         self.col = col
         self.row = row
-        self.rect.update(col*SQUARE_SIZE, row*SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
 
     def draw(self, surface, pos = None):
         if pos:
@@ -157,6 +166,18 @@ class Board(pygame.surface.Surface):
             newboard[piece.col][piece.row] = None
             newboard[pos[0]][pos[1]] = piece
             return newboard
+    
+    def update_valid_moves(self, side):
+        self.valid_moves = []
+        for col in range(8):
+            self.valid_moves.append([])
+            for row in range(8):
+                self.valid_moves.append([])
+                piece = self.board[col][row]
+                if piece and piece.side == side:
+                    moves = self.get_valid_moves(piece)
+                    if self.get_valid_moves(piece):
+                        self.valid_moves[col][row] = moves
 
     def select_piece(self, piece):
         if piece:
@@ -170,14 +191,22 @@ class Board(pygame.surface.Surface):
             if is_valid_position(pos) and piece.side == self.turn:
                 validity = self.is_valid_move(piece, pos)
                 if validity:
-                    self.move_piece(piece, pos)
+                    if type(validity) is tuple:
+                        match validity[0]:
+                            case 0:
+                                self.move_piece(piece, (2, piece.row))
+                                self.move_piece(validity[1], (3, piece.row))
+                            case 1:
+                                self.move_piece(piece, (6, piece.row))
+                                self.move_piece(validity[1], (5, piece.row))
+                            case 2:
+                                self.move_piece(piece, pos)
+                                self.remove_piece(validity[1])
+                    else: self.move_piece(piece, pos)
                     self.turn = not self.turn
                     self.last_selected = None
                     self.last_selected_moves = []
                     self.transparent_surface.fill((0,0,0,0))
-                    if type(validity) is tuple:
-                        piece_to_capture = self.get_piece(validity)
-                        self.remove_piece(piece_to_capture)
                     if self.is_in_checkmate(not piece.side):
                         winner = "White" if piece.side == WHITE else "Black"
                         print(winner + " wins!")
@@ -190,7 +219,7 @@ class Board(pygame.surface.Surface):
         piece = self.get_piece(pos)
         if piece and piece.side == self.turn:
             self.select_piece(piece)
-        elif pos in self.last_selected_moves:
+        else:
             self.attempt_move(self.last_selected, pos)
 
     def unclick(self, pos):
@@ -219,8 +248,6 @@ class Board(pygame.surface.Surface):
         return False
     
     def is_in_checkmate(self, side):
-        if not self.is_in_check(side):
-            return False
         for col in range(8):
             for row in range(8):
                 piece = self.board[col][row]
@@ -300,6 +327,14 @@ class Board(pygame.surface.Surface):
             return True
         return False
     
+    def is_special_move(self, piece, pos):
+        oldcol, oldrow = piece.col, piece.row
+        col, row = pos
+        if piece.type == PAWN:
+            if oldrow != row and oldcol != col and not self.get_piece(pos):
+                return EN_PASSANT
+            
+
     def get_possible_moves(self, piece, board = None):
         if board == None:
             board = self.board
@@ -346,6 +381,15 @@ class Board(pygame.surface.Surface):
                 case "K":
                     possible_moves.extend(self.get_valid_diagonals(piece, board, 1))
                     possible_moves.extend(self.get_valid_straights(piece, board, 1))
+                    if not piece.has_moved and not self.is_in_check(piece.side):
+                        if self.is_valid_straight((oldcol, oldrow), (0, oldrow), board):
+                            rook_to_castle = self.get_piece((0, oldrow))
+                            if rook_to_castle and rook_to_castle.type == ROOK and rook_to_castle.side == piece.side and not rook_to_castle.has_moved:
+                                possible_moves.extend([(i, oldrow) for i in range(3)])
+                        if self.is_valid_straight((oldcol, oldrow), (7, oldrow), board):
+                            rook_to_castle = self.get_piece((7, oldrow))
+                            if rook_to_castle and rook_to_castle.type == ROOK and rook_to_castle.side == piece.side and not rook_to_castle.has_moved:
+                                possible_moves.extend([(6, oldrow), (7, oldrow)])
                 case _:
                     return False
         return possible_moves
@@ -355,14 +399,14 @@ class Board(pygame.surface.Surface):
             board = self.board
         possible_moves = self.get_possible_moves(piece, board)
         valid_moves = []
-        for move in possible_moves:
-            if not is_valid_position(move): continue
+        for pos in possible_moves:
+            if not is_valid_position(pos): continue
             oldpos = (piece.col, piece.row)
-            newboard = self.board_if_move(piece, move)
-            piece.move(move)
+            newboard = self.board_if_move(piece, pos)
+            piece.change_pos(pos)
             if not self.is_in_check(piece.side, newboard):
-                valid_moves.append(move)
-            piece.move(oldpos)
+                valid_moves.append(pos)
+            piece.change_pos(oldpos)
         return valid_moves
     
     def is_possible_move(self, piece, pos, board = None):
@@ -385,7 +429,7 @@ class Board(pygame.surface.Surface):
                             if self.last_move:
                                 lastpiece, lastold, lastnew = self.last_move
                                 if lastpiece.type == PAWN and lastpiece.side != piece.side and lastold[0] == col and abs(lastnew[1] - lastold[1]) == 2 and lastnew[1] == oldrow:
-                                    return (lastpiece.col, lastpiece.row)
+                                    return (EN_PASSANT, lastpiece)
                         return False
                     elif oldcol == col:
                         if piece.side == WHITE:
@@ -415,6 +459,17 @@ class Board(pygame.surface.Surface):
                 case "K":
                     if (abs(col - oldcol) <= 1) and (abs(row - oldrow) <= 1):
                         return True
+                    if not piece.has_moved and oldrow == row and not self.is_in_check(piece.side):
+                        
+                        direction = col - oldcol
+                        if (direction == -2 or direction == -3 or direction == -4) and self.is_valid_straight((oldcol, oldrow), (0, oldrow), board):
+                            rook_to_castle = self.get_piece((0, oldrow))
+                            if rook_to_castle and rook_to_castle.type == ROOK and rook_to_castle.side == piece.side and not rook_to_castle.has_moved:
+                                return (LONG_CASTLE, rook_to_castle)
+                        if (direction == 2 or direction == 3) and self.is_valid_straight((oldcol, oldrow), (7, oldrow), board):
+                            rook_to_castle = self.get_piece((7, oldrow))
+                            if rook_to_castle and rook_to_castle.type == ROOK and rook_to_castle.side == piece.side and not rook_to_castle.has_moved:
+                                return (SHORT_CASTLE, rook_to_castle)
                     return False
                 case _:
                     return False
@@ -425,10 +480,10 @@ class Board(pygame.surface.Surface):
         if possible:
             oldpos = (piece.col, piece.row)
             newboard = self.board_if_move(piece, pos)
-            piece.move(pos)
+            piece.change_pos(pos)
             if self.is_in_check(piece.side, newboard):
                 possible = False
-            piece.move(oldpos)
+            piece.change_pos(oldpos)
         return possible
 
 
