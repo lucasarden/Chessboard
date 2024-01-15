@@ -333,7 +333,16 @@ class Board(pygame.surface.Surface):
         if piece.type == PAWN:
             if oldrow != row and oldcol != col and not self.get_piece(pos):
                 return EN_PASSANT
-            
+    
+    def would_be_check(self, side, piece, pos):
+        oldpos = (piece.col, piece.row)
+        newboard = self.board_if_move(piece, pos)
+        piece.change_pos(pos)
+        if self.is_in_check(side, newboard):
+            piece.change_pos(oldpos)
+            return True
+        piece.change_pos(oldpos)
+        return False
 
     def get_possible_moves(self, piece, board = None):
         if board == None:
@@ -383,13 +392,15 @@ class Board(pygame.surface.Surface):
                     possible_moves.extend(self.get_valid_straights(piece, board, 1))
                     if not piece.has_moved and not self.is_in_check(piece.side):
                         if self.is_valid_straight((oldcol, oldrow), (0, oldrow), board):
-                            rook_to_castle = self.get_piece((0, oldrow))
-                            if rook_to_castle and rook_to_castle.type == ROOK and rook_to_castle.side == piece.side and not rook_to_castle.has_moved:
-                                possible_moves.extend([(i, oldrow) for i in range(3)])
+                            if not self.would_be_check(piece.side, piece, (3, oldrow)):
+                                rook_to_castle = self.get_piece((0, oldrow))
+                                if rook_to_castle and rook_to_castle.type == ROOK and rook_to_castle.side == piece.side and not rook_to_castle.has_moved:
+                                    possible_moves.extend([(1, oldrow), (2, oldrow)])
                         if self.is_valid_straight((oldcol, oldrow), (7, oldrow), board):
-                            rook_to_castle = self.get_piece((7, oldrow))
-                            if rook_to_castle and rook_to_castle.type == ROOK and rook_to_castle.side == piece.side and not rook_to_castle.has_moved:
-                                possible_moves.extend([(6, oldrow), (7, oldrow)])
+                            if not self.would_be_check(piece.side, piece, (5, oldrow)):
+                                rook_to_castle = self.get_piece((7, oldrow))
+                                if rook_to_castle and rook_to_castle.type == ROOK and rook_to_castle.side == piece.side and not rook_to_castle.has_moved:
+                                    possible_moves.extend([(6, oldrow)])
                 case _:
                     return False
         return possible_moves
