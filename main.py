@@ -533,5 +533,5 @@ if __name__ == '__main__':
     main()
 
 """
-TODO: Castling, Animate Click-Click Moves, Add cache for valid movess
+TODO: Animate Click-Click Moves, Add cache for valid moves, Queening, Cleanup formatting, separate files
 """
